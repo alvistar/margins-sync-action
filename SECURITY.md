@@ -42,11 +42,16 @@ names) anchor the binding because repo/org renames free the old name for
 re-registration (resurrection attacks).
 
 Binding mutations (enable / reset / override) are gated to the workspace
-creator **or an instance admin** (operator succession: when the installing
-operator leaves, an admin retains binding control), require workspace
-membership before any binding state is disclosed, and every mutation —
-including each *use* of the override — is written to a dedicated audit
-table with actor and before/after state.
+creator **or an instance admin**, require workspace membership before any
+binding state is disclosed, and every mutation — including each *use* of
+the override (one audit entry per push, written at manifest commit) — is
+recorded in a dedicated audit table with actor and before/after state.
+
+> **Honesty note (current release):** Margins has no instance-admin role
+> modeling yet; the creator-or-admin gate is implemented but resolves to
+> creator-only until admin modeling lands. Operator succession therefore
+> currently requires the workspace creator's account to remain active —
+> track this before multi-operator deployments.
 
 ## Single-writer enforcement
 
@@ -89,7 +94,7 @@ repository to survive the next merge (full-tree sync overwrites by design).
 |---|---|
 | Suspected token leak | Nothing to rotate — tokens expire in ~5 min. Check server logs for the `jti`/`run_id`; verify the manifest history for that window. |
 | Repo compromise (malicious pushes) | Reset the workspace trust binding (one place, creator/admin). Pushes stop immediately — there is no other credential to revoke. |
-| Malicious full-tree deletion | Restore from document version history. <!-- TODO(U2 verification): state the verified restore capability and procedure here before release. --> |
+| Malicious full-tree deletion | Deletion is **soft** server-side: the manifest's auto-delete marks documents deleted without touching content, and re-pushing the path revives them — so a malicious empty-tree push destroys nothing; recover by re-pushing from git (the source of truth). Malicious *overwrites* are recoverable from per-document version history (last 10 snapshots per document; markdown only — image bytes persist on disk regardless). There is no one-click restore endpoint: recovery is re-push from git, or manual copy from a stored version. Ten successive malicious overwrites of one file can roll good content out of its version window — git remains the recovery source in that case. |
 | Repo renamed/transferred | Pushes fail closed (identity mismatch, opaque 403). `margins audit` reports "binding drift"; creator/admin runs reset + re-bind. |
 | Operator offboarding | Instance admin retains binding control (creator-or-admin gate); no per-repo secrets to rotate. |
 
