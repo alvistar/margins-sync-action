@@ -1,0 +1,122 @@
+# E2E: run the composite action for real (real OIDC token from GitHub's token
+# service, audience = the local mock's origin) against a hermetic mock of the
+# Margins sync endpoints, then assert the full CAS contract from the mock's
+# recorded state. Requires the pinned margins-cli release to exist on npm —
+# the suite fails red against any CLI version that predates the casSync fix.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write # the E2E mints a real workflow OIDC token for the mock
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: actionlint
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint -color
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Hermeticity — pinned CLI must have zero runtime dependencies
+        run: |
+          set -euo pipefail
+          PIN=$(grep -oE 'MARGINS_CLI_VERSION="[^"]+"' action.yml | cut -d'"' -f2)
+          echo "pinned margins-cli version: $PIN"
+          DEPS=$(npm view "margins-cli@${PIN}" dependencies --json 2>/dev/null || echo "null")
+          if [ "$DEPS" != "null" ] && [ "$DEPS" != "{}" ] && [ -n "$DEPS" ]; then
+            echo "::error::margins-cli@${PIN} declares runtime dependencies — the release is not hermetic: ${DEPS}"
+            exit 1
+          fi
+
+      - name: Start mock Margins server
+        run: |
+          MOCK_EXPECTED_AUD="http://localhost:8787" \
+          MOCK_STATE_FILE="$RUNNER_TEMP/mock-state.json" \
+          node test/mock-server.mjs &
+          echo "MOCK_STATE_FILE=$RUNNER_TEMP/mock-state.json" >> "$GITHUB_ENV"
+          sleep 1
+
+      - name: Prepare fixture repo
+        run: |
+          set -euo pipefail
+          FIXTURE="$RUNNER_TEMP/fixture"
+          mkdir -p "$FIXTURE"
+          cp -R test/fixtures/docs "$FIXTURE/" 2>/dev/null || true
+          cp test/fixtures/*.md "$FIXTURE/" 2>/dev/null || true
+          git -C "$FIXTURE" init -b main -q
+          git -C "$FIXTURE" -c user.email=ci@test -c user.name=ci add -A
+          git -C "$FIXTURE" -c user.email=ci@test -c user.name=ci commit -qm fixture
+          echo "FIXTURE=$FIXTURE" >> "$GITHUB_ENV"
+
+      - name: Run the action (first push)
+        uses: ./
+        with:
+          server-url: http://localhost:8787
+          workspace-id: ws-e2e
+          schema-version: 1
+          directory: ${{ env.FIXTURE }}
+
+      - name: Assert first push
+        run: node test/assert-e2e.mjs first "$MOCK_STATE_FILE" "$FIXTURE"
+
+      - name: Delete a file and push again (deletion semantics)
+        run: rm "$FIXTURE/extra.md"
+      - name: Run the action (deletion push)
+        uses: ./
+        with:
+          server-url: http://localhost:8787
+          workspace-id: ws-e2e
+          schema-version: 1
+          directory: ${{ env.FIXTURE }}
+      - name: Assert deletion push
+        run: node test/assert-e2e.mjs deletion "$MOCK_STATE_FILE" "$FIXTURE"
+
+      - name: Restart mock with injected 409 (retry semantics)
+        run: |
+          set -euo pipefail
+          pkill -f mock-server.mjs || true
+          sleep 1
+          MOCK_EXPECTED_AUD="http://localhost:8787" \
+          MOCK_STATE_FILE="$RUNNER_TEMP/mock-state-409.json" \
+          MOCK_FAIL_FIRST_POST=409 \
+          node test/mock-server.mjs &
+          echo "MOCK_STATE_FILE=$RUNNER_TEMP/mock-state-409.json" >> "$GITHUB_ENV"
+          sleep 1
+      - name: Run the action (409 retry)
+        uses: ./
+        with:
+          server-url: http://localhost:8787
+          workspace-id: ws-e2e
+          schema-version: 1
+          directory: ${{ env.FIXTURE }}
+      - name: Assert 409 retry
+        run: node test/assert-e2e.mjs retry "$MOCK_STATE_FILE" "$FIXTURE"
+
+      - name: Schema-version warning fires for stale callers
+        uses: ./
+        with:
+          server-url: http://localhost:8787
+          workspace-id: ws-e2e
+          schema-version: 0
+          directory: ${{ env.FIXTURE }}

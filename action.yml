@@ -1,0 +1,92 @@
+name: "Margins Sync"
+description: >-
+  Push this repository's markdown (and referenced images) to a Margins
+  workspace using GitHub Actions OIDC — no stored credentials in either
+  direction. The workflow needs `permissions: id-token: write`.
+author: alvistar
+branding:
+  icon: book-open
+  color: blue
+
+inputs:
+  server-url:
+    description: >-
+      Margins server origin (scheme + host, no trailing slash). Also used as
+      the OIDC token audience — the server pins this exact value.
+    required: true
+  workspace-id:
+    description: >-
+      Margins workspace id bound to this repository. Stamped by
+      `margins install`; one workspace per repository.
+    required: true
+  schema-version:
+    description: >-
+      Caller workflow-file schema version. The action warns when this is older
+      than the version it expects, which is how SHA-pinned consumers learn
+      their stamped workflow file needs updating.
+    required: false
+    default: "1"
+  directory:
+    description: Directory to sync (repo-relative). Defaults to the repo root.
+    required: false
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch OIDC token
+      shell: bash
+      # Inputs reach run: steps only via env (shell-injection defense) — never
+      # interpolate ${{ inputs.* }} directly into the script body.
+      env:
+        MARGINS_SERVER_URL: ${{ inputs.server-url }}
+      run: |
+        set -euo pipefail
+        if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+          echo "::error::OIDC token request env is missing. Add 'permissions: id-token: write' to the job (and keep 'contents: read' for checkout)." >&2
+          exit 1
+        fi
+        # Normalize: strip a single trailing slash so the audience matches the
+        # server's exact-string pin.
+        AUD="${MARGINS_SERVER_URL%/}"
+        TOKEN=$(curl -sSf -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUD}" | jq -r '.value')
+        if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+          echo "::error::Failed to fetch OIDC token from GitHub token service." >&2
+          exit 1
+        fi
+        # Mask before anything can echo it.
+        echo "::add-mask::${TOKEN}"
+        echo "MARGINS_OIDC_TOKEN=${TOKEN}" >> "$GITHUB_ENV"
+        echo "MARGINS_AUDIENCE=${AUD}" >> "$GITHUB_ENV"
+
+    - name: Check workflow schema version
+      shell: bash
+      env:
+        CALLER_SCHEMA_VERSION: ${{ inputs.schema-version }}
+      run: |
+        set -euo pipefail
+        EXPECTED_SCHEMA_VERSION=1
+        if [ "${CALLER_SCHEMA_VERSION}" -lt "${EXPECTED_SCHEMA_VERSION}" ] 2>/dev/null; then
+          echo "::warning::Your margins-sync workflow file (schema-version ${CALLER_SCHEMA_VERSION}) is older than this action expects (${EXPECTED_SCHEMA_VERSION}). Re-run 'margins install' to refresh it."
+        fi
+
+    - name: Push to Margins
+      shell: bash
+      env:
+        MARGINS_WORKSPACE_ID: ${{ inputs.workspace-id }}
+        MARGINS_SYNC_DIR: ${{ inputs.directory }}
+        # MARGINS_OIDC_TOKEN, MARGINS_AUDIENCE from GITHUB_ENV.
+        # ACTIONS_ID_TOKEN_REQUEST_URL/TOKEN pass through automatically so the
+        # CLI can re-mint on a 401 mid-push (large first syncs can outlive the
+        # ~5-minute JWT validity).
+      run: |
+        set -euo pipefail
+        # MARGINS_CLI_VERSION is the exact, hermetically-bundled release this
+        # action ships with. Bumped via release PR (see RELEASING.md). Never a
+        # range — npx would resolve mutable code into every consumer run.
+        MARGINS_CLI_VERSION="0.6.0"
+        npx -y "margins-cli@${MARGINS_CLI_VERSION}" workspace push \
+          --workspace "${MARGINS_WORKSPACE_ID}" \
+          --server-url "${MARGINS_AUDIENCE}" \
+          --dir "${MARGINS_SYNC_DIR}"
