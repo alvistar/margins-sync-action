@@ -85,7 +85,7 @@ runs:
         # MARGINS_CLI_VERSION is the exact, hermetically-bundled release this
         # action ships with. Bumped via release PR (see RELEASING.md). Never a
         # range — npx would resolve mutable code into every consumer run.
-        MARGINS_CLI_VERSION="0.6.0"
+        MARGINS_CLI_VERSION="0.7.0"
         npx -y "margins-cli@${MARGINS_CLI_VERSION}" workspace push \
           --workspace "${MARGINS_WORKSPACE_ID}" \
           --server-url "${MARGINS_AUDIENCE}" \
