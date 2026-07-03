@@ -79,6 +79,7 @@ runs:
         # Branch names are attacker-influenceable — pass via env, never inline
         # into the script body (shell-injection defense).
         MARGINS_PUSH_BRANCH: ${{ github.ref_name }}
+        MARGINS_PUSH_REF_TYPE: ${{ github.ref_type }}
         MARGINS_DELETE_REF: ${{ github.event.ref }}
         MARGINS_DELETE_REF_TYPE: ${{ github.event.ref_type }}
         # MARGINS_OIDC_TOKEN, MARGINS_AUDIENCE from GITHUB_ENV.
@@ -105,8 +106,15 @@ runs:
             --server-url "${MARGINS_AUDIENCE}" \
             --branch "${MARGINS_DELETE_REF}"
         else
-          # push / workflow_dispatch → sync this branch. Pass --branch explicitly
-          # (github.ref_name) since actions/checkout can leave a detached HEAD.
+          # push / workflow_dispatch → sync this branch. Skip non-branch refs:
+          # a tag push (or a workflow_dispatch on a tag) would otherwise sync the
+          # tag name as a workspace branch. Mirrors the delete path's tag guard.
+          if [ "${MARGINS_PUSH_REF_TYPE}" != "branch" ]; then
+            echo "Ignoring ${MARGINS_PUSH_REF_TYPE} ref (${MARGINS_PUSH_BRANCH}) — only branches sync."
+            exit 0
+          fi
+          # Pass --branch explicitly (github.ref_name) since actions/checkout can
+          # leave a detached HEAD.
           npx -y "margins-cli@${MARGINS_CLI_VERSION}" workspace push \
             --workspace "${MARGINS_WORKSPACE_ID}" \
             --server-url "${MARGINS_AUDIENCE}" \

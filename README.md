@@ -1,8 +1,9 @@
 # margins-sync-action
 
 Sync a repository's markdown documentation (and referenced images) to a
-[Margins](https://github.com/alvistar/ai-review) workspace on every merge to
-the default branch — **with zero long-lived credentials in either direction**.
+[Margins](https://github.com/alvistar/ai-review) workspace on every branch, and
+archive a workspace branch when its git branch is deleted — **with zero
+long-lived credentials in either direction**.
 
 - Margins never holds GitHub credentials: content is *pushed* by your CI via a
   content-addressable sync protocol.
@@ -25,7 +26,8 @@ margins install owner/repo --server-url https://margins.example.com
 `install` creates the workspace, writes the trust binding (repo IDs sourced
 from the GitHub API), and opens a PR adding
 `.github/workflows/margins-sync.yml` to the repo. Merge the PR; the next md
-change on the default branch appears in Margins.
+change on any branch appears in Margins (each git branch as its own workspace
+branch), and deleting a branch archives it.
 
 Manual setup: copy `templates/margins-sync.yml`, fill in the placeholders,
 and have a workspace member enable the trust binding for the workspace.
@@ -55,7 +57,7 @@ monthly and after any repo rename/transfer.
 |---|---|---|
 | `server-url` | yes | Margins origin (scheme + host, no trailing slash). Doubles as the OIDC audience. |
 | `workspace-id` | yes | Workspace bound to this repo (stamped by `margins install`). |
-| `schema-version` | no | Caller workflow-file schema version (default `1`). |
+| `schema-version` | no | Caller workflow-file schema version (default `2`). |
 | `directory` | no | Directory to sync (default repo root). |
 
 ## Limits
@@ -64,8 +66,9 @@ monthly and after any repo rename/transfer.
   `margins install`/`margins audit` pre-check and flag offenders.
 - One workspace per repository (the sync protocol pushes the full file tree;
   sharing a workspace across repos would cross-delete content).
-- Sync runs on `push` to the default branch only. Pull-request events are
-  deliberately rejected server-side.
+- Sync runs on `push` to any branch (paths-filtered) and on branch `delete`
+  (which archives the workspace branch). Pull-request events are deliberately
+  rejected server-side, and a token may write only the branch it was minted for.
 
 See `SECURITY.md` for the threat model and incident playbook, and
 `RELEASING.md` for the release/pinning process.

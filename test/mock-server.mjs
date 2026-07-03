@@ -34,6 +34,7 @@ const state = {
   authSeen: [],              // structural auth assessment per request
   clientHeaderSeen: [],      // X-Margins-Client values
   failedFirstPost: false,
+  archives: [],              // branch-archive POSTs (workspaceId + branch)
 };
 
 function persist() {
@@ -91,7 +92,13 @@ const server = createServer(async (req, res) => {
     const abChunks = [];
     for await (const c of req) abChunks.push(c);
     const parsed = JSON.parse(Buffer.concat(abChunks).toString() || "{}");
-    state.archives = state.archives || [];
+    // Mirror the real route's body validation: a missing/empty branch is a 400,
+    // not a silent archived:true (which would mask a missing-flag bug in the
+    // action's archive-branch invocation).
+    if (typeof parsed.branch !== "string" || parsed.branch.length === 0) {
+      persist();
+      return json(res, 400, { error: { code: "VALIDATION", message: "branch is required" } });
+    }
     state.archives.push({ workspaceId: archiveMatch[1], branch: parsed.branch });
     persist();
     return json(res, 200, { data: { branch: parsed.branch, archived: true } });
