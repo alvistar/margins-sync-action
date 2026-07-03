@@ -80,6 +80,23 @@ function json(res, status, body) {
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
+
+  // POST /api/workspaces/:id/branches/archive — the archive-on-delete path.
+  const archiveMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/branches\/archive$/);
+  if (archiveMatch && req.method === "POST") {
+    if (!assertAuth(req)) {
+      persist();
+      return json(res, 401, { error: { code: "UNAUTHORIZED", message: "structural auth check failed (see mock state)" } });
+    }
+    const abChunks = [];
+    for await (const c of req) abChunks.push(c);
+    const parsed = JSON.parse(Buffer.concat(abChunks).toString() || "{}");
+    state.archives = state.archives || [];
+    state.archives.push({ workspaceId: archiveMatch[1], branch: parsed.branch });
+    persist();
+    return json(res, 200, { data: { branch: parsed.branch, archived: true } });
+  }
+
   const m = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/sync\/(manifest|objects\/([a-f0-9]{64}))$/);
   if (!m) return json(res, 404, { error: { code: "NOT_FOUND" } });
 
