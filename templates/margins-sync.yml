@@ -1,11 +1,11 @@
-# Margins sync — stamped by `margins install` (schema-version 1).
+# Margins sync — stamped by `margins install` (schema-version 2).
 # Pushes this repo's markdown + referenced images to its Margins workspace on
-# every merge to the default branch. Auth is GitHub OIDC: no secrets stored.
+# every branch (paths-filtered), and archives a workspace branch when its git
+# branch is deleted. Auth is GitHub OIDC: no secrets stored.
 name: Margins sync
 
 on:
   push:
-    branches: ["__DEFAULT_BRANCH__"]
     paths:
       - "**.md"
       - "**.png"
@@ -17,6 +17,7 @@ on:
       # Config changes must retrigger sync too:
       - ".marginsignore"
       - ".github/workflows/margins-sync.yml"
+  delete:
   workflow_dispatch:
 
 # Queue, don't cancel: cancellation has a grace window in which an older run's
@@ -39,4 +40,4 @@ jobs:
         with:
           server-url: "__SERVER_URL__"
           workspace-id: "__WORKSPACE_ID__"
-          schema-version: 1
+          schema-version: 2

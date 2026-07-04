@@ -92,7 +92,7 @@ jobs:
       - name: Assert deletion push
         run: node test/assert-e2e.mjs deletion "$MOCK_STATE_FILE" "$FIXTURE"
 
-      - name: Restart mock with injected 409 (retry semantics)
+      - name: Restart mock with injected 409 (conflict semantics)
         run: |
           set -euo pipefail
           pkill -f mock-server.mjs || true
@@ -103,15 +103,25 @@ jobs:
           node test/mock-server.mjs &
           echo "MOCK_STATE_FILE=$RUNNER_TEMP/mock-state-409.json" >> "$GITHUB_ENV"
           sleep 1
-      - name: Run the action (409 retry)
+      # margins-cli >=0.13 surfaces-and-stops on ANY 409 (post-PR2 the server
+      # 3-way-merges divergent pushes, so a 409 is a real conflict to reconcile,
+      # never a transient CAS race to re-push). The action run therefore FAILS
+      # on the injected 409 — that is the contract we assert.
+      - name: Run the action (409 surfaces-and-stops)
+        id: conflict
+        continue-on-error: true
         uses: ./
         with:
           server-url: http://localhost:8787
           workspace-id: ws-e2e
           schema-version: 1
           directory: ${{ env.FIXTURE }}
-      - name: Assert 409 retry
-        run: node test/assert-e2e.mjs retry "$MOCK_STATE_FILE" "$FIXTURE"
+      - name: Assert 409 surfaces-and-stops
+        run: |
+          set -euo pipefail
+          test "${{ steps.conflict.outcome }}" = "failure" \
+            || { echo "expected the action to fail on a 409, got '${{ steps.conflict.outcome }}'"; exit 1; }
+          node test/assert-e2e.mjs conflict "$MOCK_STATE_FILE" "$FIXTURE"
 
       - name: Schema-version warning fires for stale callers
         uses: ./

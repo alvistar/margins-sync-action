@@ -25,7 +25,7 @@ inputs:
       than the version it expects, which is how SHA-pinned consumers learn
       their stamped workflow file needs updating.
     required: false
-    default: "1"
+    default: "2"
   directory:
     description: Directory to sync (repo-relative). Defaults to the repo root.
     required: false
@@ -66,16 +66,22 @@ runs:
         CALLER_SCHEMA_VERSION: ${{ inputs.schema-version }}
       run: |
         set -euo pipefail
-        EXPECTED_SCHEMA_VERSION=1
+        EXPECTED_SCHEMA_VERSION=2
         if [ "${CALLER_SCHEMA_VERSION}" -lt "${EXPECTED_SCHEMA_VERSION}" ] 2>/dev/null; then
           echo "::warning::Your margins-sync workflow file (schema-version ${CALLER_SCHEMA_VERSION}) is older than this action expects (${EXPECTED_SCHEMA_VERSION}). Re-run 'margins install' to refresh it."
         fi
 
-    - name: Push to Margins
+    - name: Sync to Margins
       shell: bash
       env:
         MARGINS_WORKSPACE_ID: ${{ inputs.workspace-id }}
         MARGINS_SYNC_DIR: ${{ inputs.directory }}
+        # Branch names are attacker-influenceable — pass via env, never inline
+        # into the script body (shell-injection defense).
+        MARGINS_PUSH_BRANCH: ${{ github.ref_name }}
+        MARGINS_PUSH_REF_TYPE: ${{ github.ref_type }}
+        MARGINS_DELETE_REF: ${{ github.event.ref }}
+        MARGINS_DELETE_REF_TYPE: ${{ github.event.ref_type }}
         # MARGINS_OIDC_TOKEN, MARGINS_AUDIENCE from GITHUB_ENV.
         # ACTIONS_ID_TOKEN_REQUEST_URL/TOKEN pass through automatically so the
         # CLI can re-mint on a 401 mid-push (large first syncs can outlive the
@@ -85,8 +91,33 @@ runs:
         # MARGINS_CLI_VERSION is the exact, hermetically-bundled release this
         # action ships with. Bumped via release PR (see RELEASING.md). Never a
         # range — npx would resolve mutable code into every consumer run.
-        MARGINS_CLI_VERSION="0.7.0"
-        npx -y "margins-cli@${MARGINS_CLI_VERSION}" workspace push \
-          --workspace "${MARGINS_WORKSPACE_ID}" \
-          --server-url "${MARGINS_AUDIENCE}" \
-          --dir "${MARGINS_SYNC_DIR}"
+        MARGINS_CLI_VERSION="0.14.0"
+
+        if [ "${GITHUB_EVENT_NAME}" = "delete" ]; then
+          # Branch deletion → archive its workspace branch. GitHub fires `delete`
+          # for both branches and tags; ignore tags. The server is idempotent and
+          # guards the default branch, so archive is safe + a no-op when unknown.
+          if [ "${MARGINS_DELETE_REF_TYPE}" != "branch" ]; then
+            echo "Ignoring ${MARGINS_DELETE_REF_TYPE} deletion (${MARGINS_DELETE_REF}) — only branch deletions are archived."
+            exit 0
+          fi
+          npx -y "margins-cli@${MARGINS_CLI_VERSION}" workspace archive-branch \
+            --workspace "${MARGINS_WORKSPACE_ID}" \
+            --server-url "${MARGINS_AUDIENCE}" \
+            --branch "${MARGINS_DELETE_REF}"
+        else
+          # push / workflow_dispatch → sync this branch. Skip non-branch refs:
+          # a tag push (or a workflow_dispatch on a tag) would otherwise sync the
+          # tag name as a workspace branch. Mirrors the delete path's tag guard.
+          if [ "${MARGINS_PUSH_REF_TYPE}" != "branch" ]; then
+            echo "Ignoring ${MARGINS_PUSH_REF_TYPE} ref (${MARGINS_PUSH_BRANCH}) — only branches sync."
+            exit 0
+          fi
+          # Pass --branch explicitly (github.ref_name) since actions/checkout can
+          # leave a detached HEAD.
+          npx -y "margins-cli@${MARGINS_CLI_VERSION}" workspace push \
+            --workspace "${MARGINS_WORKSPACE_ID}" \
+            --server-url "${MARGINS_AUDIENCE}" \
+            --dir "${MARGINS_SYNC_DIR}" \
+            --branch "${MARGINS_PUSH_BRANCH}"
+        fi

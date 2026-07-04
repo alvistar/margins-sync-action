@@ -22,11 +22,19 @@ tested behavior; nothing is aspirational.
    `RS256` pinned, issuer `https://token.actions.githubusercontent.com`
    pinned, audience exact-string match (single value; GitHub's default
    audience and multi-audience arrays are rejected), `exp`/`nbf` enforced.
-3. Claims gate: `event_name` must be `push` or `workflow_dispatch`
-   (`pull_request` and `pull_request_target` are rejected — the fork
-   confused-deputy path), `ref_type` must be `branch`, and the full ref must
-   equal `refs/heads/<workspace default branch>` (a tag named like the
-   branch does not pass).
+3. Claims gate (per event):
+   - **Push sync** (`workspace push`): `event_name` must be `push` or
+     `workflow_dispatch` (`pull_request`/`pull_request_target` are rejected —
+     the fork confused-deputy path), `ref_type` must be `branch`, and `ref`
+     must be a `refs/heads/*` ref. The manifest write is then bound to the
+     token's **own** ref: a token minted for `feat/x` may write only the
+     `feat/x` workspace branch, never another branch's tree (a tag named like a
+     branch does not pass the `ref_type` check).
+   - **Branch archive** (`workspace archive-branch`, on `delete`): `event_name`
+     must be `delete`. The branch to archive comes from the request body
+     (a delete event has no checkout) and is guarded against the workspace
+     default branch server-side. This path is identity-bound (the repo trust
+     binding), not ref-bound — a bounded, reversible action (a re-push revives).
 4. Identity gate: the token's `repository` name, `repository_id`, and
    `repository_owner_id` must **all** equal the workspace's trust binding.
 

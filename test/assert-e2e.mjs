@@ -1,5 +1,5 @@
 // Assertions over the mock server's recorded state. Usage:
-//   node test/assert-e2e.mjs <first|deletion|retry> <state-file> <fixture-dir>
+//   node test/assert-e2e.mjs <first|deletion|conflict> <state-file> <fixture-dir>
 import { readFileSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -59,11 +59,13 @@ if (phase === "deletion") {
   check(lastApplied.body.parentSha === applied[0].body.commitSha, "second push parentSha equals prior headSha");
 }
 
-if (phase === "retry") {
+if (phase === "conflict") {
+  // margins-cli >=0.13: ANY 409 surfaces-and-stops — the push is NEVER re-posted
+  // (a 409 is a real content conflict to reconcile, post server-side 3-way merge).
   const injected = state.posts.filter((p) => p.outcome === "409-injected");
   check(injected.length === 1, "injected 409 was served once");
-  check(applied.length === 1, "push succeeded after exactly one retry");
-  check(state.posts.length === 2, `exactly two manifest POSTs (one 409, one retry) — got ${state.posts.length}`);
+  check(applied.length === 0, "push surfaced-and-stopped — nothing was re-applied");
+  check(state.posts.length === 1, `exactly one manifest POST (the 409, never re-pushed) — got ${state.posts.length}`);
 }
 
 if (failures > 0) {
