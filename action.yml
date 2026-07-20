@@ -91,7 +91,7 @@ runs:
         # MARGINS_CLI_VERSION is the exact, hermetically-bundled release this
         # action ships with. Bumped via release PR (see RELEASING.md). Never a
         # range — npx would resolve mutable code into every consumer run.
-        MARGINS_CLI_VERSION="0.14.0"
+        MARGINS_CLI_VERSION="0.17.0"
 
         if [ "${GITHUB_EVENT_NAME}" = "delete" ]; then
           # Branch deletion → archive its workspace branch. GitHub fires `delete`
